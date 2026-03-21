@@ -1,0 +1,20 @@
+{
+  "name": "mantle-yield-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Separate MCP server for Mantle Yield Workspace backend",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "node --env-file=.env --watch --experimental-strip-types src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node --env-file=.env dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "typescript": "^5.9.3"
+  }
+}
