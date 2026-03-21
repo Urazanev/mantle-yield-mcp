@@ -1,5 +1,4 @@
 import {
-  type DerivedProtocolEntry,
   type OpportunitiesResponse,
   type Opportunity,
   type OpportunityQueryParams,
@@ -8,8 +7,8 @@ import {
   parseOpportunity,
   parseSummaryData,
 } from "../schemas/opportunity.js";
-import { type AvailableFilters, parseAvailableFilters } from "../schemas/filters.js";
-import { type SyncStatus, parseSyncStatus } from "../schemas/sync.js";
+import { type HealthData, parseHealthData } from "../schemas/health.js";
+import { type ChartData, parseChartData } from "../schemas/chart.js";
 import {
   HttpRequestError,
   InconsistentBackendContractError,
@@ -26,11 +25,19 @@ export class MantleYieldApiClient {
     private readonly logger: Logger,
   ) {}
 
+  /** GET /api/health */
+  async fetchHealth(): Promise<HealthData> {
+    const payload = await this.requestJson("/api/health");
+    return parseHealthData(payload);
+  }
+
+  /** GET /api/summary */
   async fetchSummary(): Promise<SummaryData> {
     const payload = await this.requestJson("/api/summary");
     return parseSummaryData(payload);
   }
 
+  /** GET /api/opportunities */
   async fetchOpportunities(params: OpportunityQueryParams = {}): Promise<OpportunitiesResponse> {
     const query = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) {
@@ -38,11 +45,13 @@ export class MantleYieldApiClient {
         query.set(key, String(value));
       }
     }
-    const payload = await this.requestJson(`/api/opportunities${query.size > 0 ? `?${query.toString()}` : ""}`);
+    const path = `/api/opportunities${query.size > 0 ? `?${query.toString()}` : ""}`;
+    const payload = await this.requestJson(path);
     return parseOpportunitiesResponse(payload);
   }
 
-  async fetchOpportunityDetails(id: string): Promise<Opportunity> {
+  /** GET /api/opportunities/:id */
+  async fetchOpportunity(id: string): Promise<Opportunity> {
     try {
       const payload = await this.requestJson(`/api/opportunities/${encodeURIComponent(id)}`, {
         classify404: "details_endpoint",
@@ -62,77 +71,56 @@ export class MantleYieldApiClient {
     }
   }
 
-  async fetchSyncStatus(): Promise<SyncStatus> {
-    const healthPayload = await this.requestJson("/api/health");
-    const health = parseSyncStatus(healthPayload);
-
-    try {
-      const opportunities = await this.fetchOpportunities({ page: 1, limit: 1 });
-      return {
-        ...health,
-        nextRefresh: opportunities.syncMeta.nextRefresh,
-        lastFullSync: opportunities.syncMeta.lastSync ?? health.lastSync,
-      };
-    } catch {
-      return health;
-    }
+  /** GET /api/opportunities/:id/chart */
+  async fetchOpportunityChart(id: string): Promise<ChartData> {
+    const path = `/api/opportunities/${encodeURIComponent(id)}/chart`;
+    const payload = await this.requestJson(path);
+    return parseChartData(payload);
   }
 
-  async fetchAvailableFilters(): Promise<AvailableFilters> {
-    const payload = await this.requestJson("/api/filters");
-    return parseAvailableFilters(payload);
-  }
-
-  async fetchProtocols(): Promise<DerivedProtocolEntry[]> {
-    const payload = await this.requestJson("/api/protocols");
-    if (!Array.isArray(payload)) {
-      throw new InconsistentBackendContractError("Expected /api/protocols to return an array", "/api/protocols");
+  /** POST /api/refresh */
+  async refreshData(): Promise<{ message: string }> {
+    const payload = await this.requestJson("/api/refresh", { method: "POST" });
+    if (
+      typeof payload !== "object" ||
+      payload === null ||
+      typeof (payload as Record<string, unknown>).message !== "string"
+    ) {
+      throw new InconsistentBackendContractError(
+        'Expected /api/refresh to return {"message": string}',
+        "/api/refresh",
+      );
     }
-
-    return payload.map((item) => {
-      if (typeof item !== "object" || item === null || Array.isArray(item)) {
-        throw new InconsistentBackendContractError("Protocol entry must be an object", "/api/protocols");
-      }
-
-      const record = item as Record<string, unknown>;
-      if (typeof record.slug !== "string" || typeof record.name !== "string") {
-        throw new InconsistentBackendContractError(
-          'Protocol entry must include string fields "slug" and "name"',
-          "/api/protocols",
-        );
-      }
-
-      return {
-        slug: record.slug,
-        name: record.name,
-        url: typeof record.url === "string" ? record.url : null,
-        opportunityCount: typeof record.opportunityCount === "number" ? record.opportunityCount : 0,
-      };
-    });
+    return { message: (payload as Record<string, unknown>).message as string };
   }
 
   private async requestJson(
     path: string,
-    options: { classify404?: "missing_endpoint" | "details_endpoint" } = {},
+    options: {
+      classify404?: "missing_endpoint" | "details_endpoint";
+      method?: "GET" | "POST";
+    } = {},
   ): Promise<unknown> {
     const endpoint = `${this.env.apiBaseUrl}${path}`;
+    const method = options.method ?? "GET";
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.env.apiTimeoutMs);
 
     try {
-      this.logger.debug("Requesting backend endpoint", { endpoint });
+      this.logger.debug(`Requesting ${method} ${endpoint}`);
       const response = await fetch(endpoint, {
-        method: "GET",
+        method,
         headers: this.buildHeaders(),
         signal: controller.signal,
       });
 
       const text = await response.text();
+
       if (response.status === 404) {
         if (options.classify404 === "details_endpoint") {
           const maybeJson = safeJsonParse(text);
           if (isNotFoundResponse(maybeJson)) {
-            throw new ResourceNotFoundError(`Opportunity at ${path}`, "fetchOpportunityDetails");
+            throw new ResourceNotFoundError(`Opportunity at ${path}`, "fetchOpportunity");
           }
         }
         throw new MissingEndpointError(path, response.status);
@@ -163,6 +151,7 @@ export class MantleYieldApiClient {
   private buildHeaders(): HeadersInit {
     const headers: HeadersInit = {
       Accept: "application/json",
+      "Content-Type": "application/json",
     };
 
     if (this.env.apiToken) {
@@ -186,6 +175,6 @@ function isNotFoundResponse(value: unknown): boolean {
     typeof value === "object" &&
     value !== null &&
     !Array.isArray(value) &&
-    (value as Record<string, unknown>).error === "Not found"
+    typeof (value as Record<string, unknown>).error === "string"
   );
 }

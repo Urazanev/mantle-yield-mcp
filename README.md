@@ -1,53 +1,196 @@
 # Mantle Yield MCP
 
-A standalone TypeScript MCP server for the Mantle Yield Workspace backend.
+A standalone TypeScript MCP server for the Mantle Yield Workspace.
 
-This project is intentionally separate from the dashboard/frontend repository and talks to the backend only through HTTP API endpoints.
+It acts as a thin wrapper over the Mantle Yield backend API — no direct DefiLlama calls, no HTML parsing, no local snapshot files.
+
+**Dashboard:** https://mantle-yield.asterworks.cc  
+**Backend API base:** https://mantle-yield.asterworks.cc
+
+---
 
 ## Implemented tools
 
-- `mantle_get_dashboard_summary`
-- `mantle_list_opportunities`
-- `mantle_get_opportunity_details`
-- `mantle_compare_opportunities`
-- `mantle_get_sync_status`
-- `mantle_get_available_filters`
-- `mantle_get_protocols`
+| Tool | Backend endpoint | Status |
+|---|---|---|
+| `mantle_get_health` | `GET /api/health` | ✅ Working |
+| `mantle_get_summary` | `GET /api/summary` | ✅ Working |
+| `mantle_list_opportunities` | `GET /api/opportunities` | ✅ Working |
+| `mantle_get_opportunity` | `GET /api/opportunities/:id` | ✅ Working |
+| `mantle_get_opportunity_chart` | `GET /api/opportunities/:id/chart` | ⚠️ Backend gap (404) |
+| `mantle_compare_opportunities` | `GET /api/opportunities/:id` × N | ✅ Working |
+| `mantle_refresh_data` | `POST /api/refresh` | ⚠️ Backend gap (404) |
+
+---
+
+## Tool reference
+
+### `mantle_get_health`
+Returns technical status from `GET /api/health`.
+
+**Arguments:** none
+
+**Returns:**
+```json
+{
+  "status": "ok",
+  "data": {
+    "status": "Healthy",
+    "lastSync": "2026-03-21T17:27:16.934Z",
+    "sourcesRefreshed": 1,
+    "failedSources": []
+  },
+  "backendGaps": [...]
+}
+```
+
+> **Backend gap note:** The actual `/api/health` response does not include fields `syncedAt`, `nextRefresh`, `source`, `itemCount`, `fileExists`, `snapshotPath` described in the original spec. The tool returns what the backend actually provides and documents the gap.
+
+---
+
+### `mantle_get_summary`
+Returns dashboard summary from `GET /api/summary`.
+
+**Arguments:** none
+
+**Returns:**
+```json
+{
+  "status": "ok",
+  "data": {
+    "opportunitiesTracked": 28,
+    "protocols": 11,
+    "assetsIndexed": 13,
+    "lastSync": "2026-03-21T17:27:16.934Z",
+    "status": "Healthy"
+  },
+  "backendGaps": []
+}
+```
+
+---
+
+### `mantle_list_opportunities`
+Returns a filtered, paginated list of yield opportunities from `GET /api/opportunities`.
+
+**Arguments (all optional):**
+
+| Argument | Type | Description |
+|---|---|---|
+| `asset` | string | Filter by asset symbol, e.g. `USDT` |
+| `strategy` | string | Filter by strategy type, e.g. `Lending` |
+| `complexity` | string | `Low`, `Med`, or `High` |
+| `lockup` | string | `none` or `has` |
+| `exposure` | string | Filter by exposure type |
+| `sort` | string | `apy_desc`, `apy_asc`, `tvl_desc`, `tvl_asc`, `protocol_az` |
+| `page` | number | Page number (1-based) |
+| `limit` | number | Items per page (max 200) |
+
+---
+
+### `mantle_get_opportunity`
+Returns full details for a single opportunity from `GET /api/opportunities/:id`.
+
+**Arguments:**
+
+| Argument | Type | Required |
+|---|---|---|
+| `id` | string (UUID) | ✅ |
+
+---
+
+### `mantle_get_opportunity_chart`
+Returns historical APY/TVL chart data from `GET /api/opportunities/:id/chart`.
+
+**Arguments:**
+
+| Argument | Type | Required |
+|---|---|---|
+| `id` | string (UUID) | ✅ |
+
+> **Backend gap:** This endpoint is not yet implemented. The tool returns `status: "backend_gap"` with a clear explanation.
+
+---
+
+### `mantle_compare_opportunities`
+Compares 2 or 3 opportunities side-by-side. Fetches each via `GET /api/opportunities/:id`.
+
+**Arguments:**
+
+| Argument | Type | Required |
+|---|---|---|
+| `ids` | string[] (2–3 UUIDs) | ✅ |
+
+**Returns** a unified comparison structure with fields: `id`, `protocolName`, `strategyType`, `assetSymbol`, `apy`, `apyBase`, `apyReward`, `tvlUsd`, `exposureType`, `complexity`, `lockupLabel`, `updatedAt`.
+
+---
+
+### `mantle_refresh_data`
+Triggers a manual backend data refresh via `POST /api/refresh`.
+
+**Arguments:** none
+
+> **Backend gap:** This endpoint is not yet implemented. The tool returns `status: "backend_gap"` with a clear explanation.
+
+---
 
 ## Environment variables
 
-- `MANTLE_YIELD_API_BASE_URL` — required backend base URL, for example `https://mantle-yield.asterworks.cc`
-- `MANTLE_YIELD_API_TOKEN` — optional bearer token
-- `MANTLE_YIELD_API_TIMEOUT_MS` — HTTP timeout in milliseconds, default `10000`
-- `PORT` — service port metadata, default `4001`
-- `NODE_ENV` — runtime environment
-- `LOG_LEVEL` — `debug|info|warn|error`
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `MANTLE_YIELD_API_BASE_URL` | ✅ | — | Backend base URL, e.g. `https://mantle-yield.asterworks.cc` |
+| `MANTLE_YIELD_API_TOKEN` | — | — | Bearer token (optional, for future auth) |
+| `MANTLE_YIELD_API_TIMEOUT_MS` | — | `10000` | HTTP timeout in milliseconds |
+| `PORT` | — | `4001` | Port metadata (not a listening port — server runs over stdio) |
+| `NODE_ENV` | — | `development` | Runtime environment |
+| `LOG_LEVEL` | — | `info` | Log level: `debug`, `info`, `warn`, `error` |
 
-See `.env.example` for a minimal configuration.
+See `.env.example` for a ready-to-copy template.
+
+---
 
 ## Local development
 
 ```bash
 npm install
 cp .env.example .env
+# Edit .env if needed
 npm run dev
 ```
 
-The server runs as MCP over stdio.
-For development it uses `node --experimental-strip-types`.
-For production it builds with `tsc`.
+The server communicates over **stdio** using the MCP protocol (JSON-RPC 2.0 with `Content-Length` framing). It does not open any TCP port.
+
+`npm run dev` uses `node --experimental-strip-types --watch` for fast iteration without a separate compile step.
+
+---
 
 ## Production run
 
 ```bash
 npm install
-npm run build
-npm run start
+npm run build    # compiles TypeScript → dist/
+npm run start    # node --env-file=.env dist/index.js
 ```
 
-## MCP connection example
+---
 
-Example stdio configuration:
+## MCP client configuration
+
+Example `mcpServers` config for Cursor / Claude Desktop / similar hosts:
+
+```json
+{
+  "mcpServers": {
+    "mantle-yield": {
+      "command": "node",
+      "args": ["--env-file=.env", "dist/index.js"],
+      "cwd": "/absolute/path/to/mantle-yield-mcp"
+    }
+  }
+}
+```
+
+For development (no build step):
 
 ```json
 {
@@ -56,61 +199,131 @@ Example stdio configuration:
       "command": "node",
       "args": [
         "--env-file=.env",
-        "dist/index.js"
+        "--experimental-strip-types",
+        "src/index.ts"
       ],
-      "cwd": "./mantle-yield-mcp"
+      "cwd": "/absolute/path/to/mantle-yield-mcp"
     }
   }
 }
 ```
 
-If your MCP host does not support `cwd`, use absolute paths in your local/private deployment config only, not in public documentation.
+---
 
-## Backend endpoints used
+## Backend source
 
-Fully used:
+All data comes exclusively from the Mantle Yield backend API at:
 
-- `GET /api/summary`
-- `GET /api/opportunities`
-- `GET /api/opportunities/:id`
-- `GET /api/health`
+```
+https://mantle-yield.asterworks.cc
+```
 
-Expected but currently absent in the backend:
+The MCP server does **not**:
+- Call DefiLlama directly
+- Parse HTML
+- Read local snapshot files
+- Perform yield calculations
+- Give financial advice or recommendations
+- Execute any on-chain transactions
 
-- `GET /api/filters`
-- `GET /api/protocols`
+---
 
-## Backend gaps found
+## Backend gaps found (as of 2026-03-21)
 
-- No dedicated filters endpoint. `mantle_get_available_filters` falls back to deriving filters from `GET /api/opportunities` and reports a `missing_endpoint` backend gap.
-- No dedicated protocols endpoint. `mantle_get_protocols` falls back to deriving protocol data from `GET /api/opportunities` and reports a `missing_endpoint` backend gap.
-- `GET /api/opportunities/:id` currently matches the list item shape. If that contract changes, the MCP server will return `invalid_payload_shape` or `inconsistent_backend_contract` instead of masking the problem.
+### Gap 1 — `GET /api/health` response shape differs from spec
 
-## Fully ready methods
+**Endpoint:** `GET /api/health`
 
-- `fetchSummary()`
-- `fetchOpportunities(params)`
-- `fetchOpportunityDetails(id)`
-- `fetchSyncStatus()`
+**Spec described:**
+```json
+{ "status": "ok", "syncedAt": "...", "nextRefresh": "...", "source": "...", "itemCount": 123, "fileExists": true, "snapshotPath": "..." }
+```
 
-## Temporarily limited methods
+**Actual response:**
+```json
+{ "status": "Healthy", "lastSync": "...", "sourcesRefreshed": 1, "failedSources": [] }
+```
 
-- `fetchAvailableFilters()` — limited by missing `GET /api/filters`
-- `fetchProtocols()` — limited by missing `GET /api/protocols`
+**Impact:** `mantle_get_health` works and returns real data, but the response shape differs from spec. The gap is reported in the tool output under `backendGaps`.
 
-## Error handling
+**Fix needed on backend:** Add `syncedAt`, `nextRefresh`, `source`, `itemCount`, `fileExists`, `snapshotPath` to `/api/health` response.
 
-The server does not hide backend problems.
-It returns explicit error/gap codes such as:
+---
 
-- `missing_endpoint`
-- `missing_field`
-- `invalid_payload_shape`
-- `inconsistent_backend_contract`
-- `http_error`
-- `timeout`
-- `not_found`
+### Gap 2 — `GET /api/opportunities/:id/chart` not implemented
+
+**Endpoint:** `GET /api/opportunities/:id/chart`
+
+**Actual:** HTTP 404 (Next.js not-found page)
+
+**Impact:** `mantle_get_opportunity_chart` returns `status: "backend_gap"`.
+
+**Fix needed on backend:** Implement `GET /api/opportunities/:id/chart` returning `{ chart, tvlUsd, apy, updated }`.
+
+---
+
+### Gap 3 — `POST /api/refresh` not implemented
+
+**Endpoint:** `POST /api/refresh`
+
+**Actual:** HTTP 404 (Next.js not-found page)
+
+**Impact:** `mantle_refresh_data` returns `status: "backend_gap"`.
+
+**Fix needed on backend:** Implement `POST /api/refresh` returning `{ "message": "Refresh started." }`.
+
+---
+
+## Error codes
+
+The server reports structured error codes in `backendGaps`:
+
+| Code | Meaning |
+|---|---|
+| `missing_endpoint` | Backend endpoint returns 404 |
+| `missing_field` | Required field absent from backend response |
+| `invalid_payload_shape` | Response shape doesn't match expected schema |
+| `inconsistent_backend_contract` | Response is valid JSON but structurally unexpected |
+| `http_error` | Non-404 HTTP error from backend |
+| `timeout` | Backend request timed out |
+| `not_found` | Specific resource (e.g. opportunity by ID) not found |
+
+---
+
+## Project structure
+
+```
+src/
+  client/
+    apiClient.ts          — HTTP client wrapping all backend endpoints
+  schemas/
+    opportunity.ts        — Opportunity, SummaryData, OpportunitiesResponse types + parsers
+    health.ts             — HealthData type + parser
+    chart.ts              — ChartData type + parser
+  tools/
+    getHealth.ts          — mantle_get_health
+    getSummary.ts         — mantle_get_summary
+    listOpportunities.ts  — mantle_list_opportunities
+    getOpportunity.ts     — mantle_get_opportunity
+    getOpportunityChart.ts — mantle_get_opportunity_chart
+    compareOpportunities.ts — mantle_compare_opportunities
+    refreshData.ts        — mantle_refresh_data
+  utils/
+    env.ts                — ENV loading + validation
+    logger.ts             — Structured stderr logger
+    errors.ts             — Typed error classes + toBackendGap helper
+  index.ts                — MCP server entry point (stdio transport)
+```
+
+---
 
 ## Status
 
-READY FOR GIT PUSH
+BACKEND GAPS FOUND
+
+Missing endpoints (documented above):
+- `GET /api/opportunities/:id/chart` — returns 404
+- `POST /api/refresh` — returns 404
+
+Response shape mismatch (documented above):
+- `GET /api/health` — different fields than spec

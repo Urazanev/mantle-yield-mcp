@@ -35,7 +35,8 @@ export interface SummaryData {
   protocols: number;
   assetsIndexed: number;
   lastSync: string | null;
-  status: BackendStatus;
+  /** Raw status string from backend (e.g. "Healthy", "Partial", "Delayed", "Unknown") */
+  status: string;
 }
 
 export interface OpportunitiesResponse {
@@ -185,17 +186,16 @@ export function parseSummaryData(value: unknown): SummaryData {
   }
 
   const statusRaw = value.status;
-  if (typeof statusRaw !== "string" || !["Healthy", "Partial", "Delayed", "Unknown"].includes(statusRaw)) {
-    throw new InvalidPayloadShapeError("Summary status is invalid");
+  if (typeof statusRaw !== "string") {
+    throw new InvalidPayloadShapeError("Summary status is invalid or missing");
   }
-  const status = statusRaw as BackendStatus;
 
   return {
     opportunitiesTracked: requireNumber(value, "opportunitiesTracked", "Summary"),
     protocols: requireNumber(value, "protocols", "Summary"),
     assetsIndexed: requireNumber(value, "assetsIndexed", "Summary"),
     lastSync: requireNullableStringFrom(value, "lastSync", "Summary"),
-    status,
+    status: statusRaw,
   };
 }
 

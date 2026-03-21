@@ -1,12 +1,12 @@
 import { MantleYieldApiClient } from "./client/apiClient.js";
 import type { OpportunityQueryParams } from "./schemas/opportunity.js";
 import { compareOpportunities } from "./tools/compareOpportunities.js";
-import { getAvailableFilters } from "./tools/getAvailableFilters.js";
-import { getDashboardSummary } from "./tools/getDashboardSummary.js";
-import { getOpportunityDetails } from "./tools/getOpportunityDetails.js";
-import { getProtocols } from "./tools/getProtocols.js";
-import { getSyncStatus } from "./tools/getSyncStatus.js";
+import { getHealth } from "./tools/getHealth.js";
+import { getOpportunity } from "./tools/getOpportunity.js";
+import { getOpportunityChart } from "./tools/getOpportunityChart.js";
+import { getSummary } from "./tools/getSummary.js";
 import { listOpportunities } from "./tools/listOpportunities.js";
+import { refreshData } from "./tools/refreshData.js";
 import { loadEnv } from "./utils/env.js";
 import { InvalidPayloadShapeError, toBackendGap } from "./utils/errors.js";
 import { Logger } from "./utils/logger.js";
@@ -32,47 +32,96 @@ const logger = new Logger(env.logLevel);
 const client = new MantleYieldApiClient(env, logger);
 
 const tools: ToolDefinition[] = [
+  // ── TOOL 1 ─────────────────────────────────────────────────────────────────
   {
-    name: "mantle_get_dashboard_summary",
-    description: "Get Mantle Yield dashboard summary from backend /api/summary.",
+    name: "mantle_get_health",
+    description:
+      "Get the technical health status of the Mantle Yield backend service. " +
+      "Calls GET /api/health. Returns status, lastSync, sourcesRefreshed, failedSources. " +
+      "Note: some fields described in the spec (syncedAt, nextRefresh, source, itemCount, " +
+      "fileExists, snapshotPath) are not yet present in the backend response.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
-    handler: async () => getDashboardSummary(client),
+    handler: async () => getHealth(client),
   },
+
+  // ── TOOL 2 ─────────────────────────────────────────────────────────────────
+  {
+    name: "mantle_get_summary",
+    description:
+      "Get the Mantle Yield dashboard summary. " +
+      "Calls GET /api/summary. Returns opportunitiesTracked, protocols, assetsIndexed, lastSync, status.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    handler: async () => getSummary(client),
+  },
+
+  // ── TOOL 3 ─────────────────────────────────────────────────────────────────
   {
     name: "mantle_list_opportunities",
-    description: "List opportunities from backend /api/opportunities with filter and pagination support.",
+    description:
+      "List yield opportunities from the Mantle Yield backend. " +
+      "Calls GET /api/opportunities. Supports filtering, sorting and pagination.",
     inputSchema: {
       type: "object",
       properties: {
-        asset: { type: "string" },
-        strategy: { type: "string" },
-        complexity: { type: "string" },
-        lockup: { type: "string", enum: ["none", "has"] },
-        exposure: { type: "string" },
-        sort: { type: "string", enum: ["apy_desc", "apy_asc", "tvl_desc", "tvl_asc", "protocol_az"] },
-        page: { type: "number", minimum: 1 },
-        limit: { type: "number", minimum: 1, maximum: 100 },
+        asset: { type: "string", description: "Filter by asset symbol, e.g. 'USDT'" },
+        strategy: { type: "string", description: "Filter by strategy type, e.g. 'Lending'" },
+        complexity: { type: "string", description: "Filter by complexity: 'Low', 'Med', or 'High'" },
+        lockup: { type: "string", description: "Filter by lockup: 'none' or 'has'" },
+        exposure: { type: "string", description: "Filter by exposure type, e.g. 'Lending'" },
+        sort: {
+          type: "string",
+          enum: ["apy_desc", "apy_asc", "tvl_desc", "tvl_asc", "protocol_az"],
+          description: "Sort order",
+        },
+        page: { type: "number", minimum: 1, description: "Page number (1-based)" },
+        limit: { type: "number", minimum: 1, maximum: 200, description: "Items per page" },
       },
       additionalProperties: false,
     },
     handler: async (args) => listOpportunities(client, validateOpportunityParams(args)),
   },
+
+  // ── TOOL 4 ─────────────────────────────────────────────────────────────────
   {
-    name: "mantle_get_opportunity_details",
-    description: "Get a single opportunity by id from backend /api/opportunities/:id.",
+    name: "mantle_get_opportunity",
+    description:
+      "Get full details for a single yield opportunity by its ID. " +
+      "Calls GET /api/opportunities/:id.",
     inputSchema: {
       type: "object",
       properties: {
-        id: { type: "string" },
+        id: { type: "string", description: "Opportunity ID (UUID)" },
       },
       required: ["id"],
       additionalProperties: false,
     },
-    handler: async (args) => getOpportunityDetails(client, requireString(args, "id")),
+    handler: async (args) => getOpportunity(client, requireString(args, "id")),
   },
+
+  // ── TOOL 5 ─────────────────────────────────────────────────────────────────
+  {
+    name: "mantle_get_opportunity_chart",
+    description:
+      "Get historical chart data (APY / TVL over time) for a yield opportunity. " +
+      "Calls GET /api/opportunities/:id/chart. " +
+      "NOTE: This backend endpoint is not yet implemented and will return a backend_gap status.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Opportunity ID (UUID)" },
+      },
+      required: ["id"],
+      additionalProperties: false,
+    },
+    handler: async (args) => getOpportunityChart(client, requireString(args, "id")),
+  },
+
+  // ── TOOL 6 ─────────────────────────────────────────────────────────────────
   {
     name: "mantle_compare_opportunities",
-    description: "Compare 2-3 opportunities by id using backend /api/opportunities/:id.",
+    description:
+      "Compare 2 or 3 yield opportunities side by side. " +
+      "Fetches each opportunity via GET /api/opportunities/:id and returns a unified comparison structure.",
     inputSchema: {
       type: "object",
       properties: {
@@ -81,6 +130,7 @@ const tools: ToolDefinition[] = [
           items: { type: "string" },
           minItems: 2,
           maxItems: 3,
+          description: "Array of 2 or 3 opportunity IDs to compare",
         },
       },
       required: ["ids"],
@@ -88,27 +138,22 @@ const tools: ToolDefinition[] = [
     },
     handler: async (args) => compareOpportunities(client, requireStringArray(args, "ids", 2, 3)),
   },
+
+  // ── TOOL 7 ─────────────────────────────────────────────────────────────────
   {
-    name: "mantle_get_sync_status",
-    description: "Get backend sync status from /api/health.",
+    name: "mantle_refresh_data",
+    description:
+      "Trigger a manual data refresh on the backend. " +
+      "Calls POST /api/refresh. " +
+      "NOTE: This backend endpoint is not yet implemented and will return a backend_gap status.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
-    handler: async () => getSyncStatus(client),
-  },
-  {
-    name: "mantle_get_available_filters",
-    description: "Get available filters. Uses /api/filters if present; otherwise derives from /api/opportunities and marks the backend gap.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
-    handler: async () => getAvailableFilters(client),
-  },
-  {
-    name: "mantle_get_protocols",
-    description: "Get protocols. Uses /api/protocols if present; otherwise derives from /api/opportunities and marks the backend gap.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
-    handler: async () => getProtocols(client),
+    handler: async () => refreshData(client),
   },
 ];
 
 const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
+
+// ── MCP stdio transport ──────────────────────────────────────────────────────
 
 let buffer = "";
 let expectedContentLength: number | null = null;
@@ -118,26 +163,24 @@ process.stdin.on("data", (chunk) => {
   buffer += chunk;
   while (true) {
     if (expectedContentLength === null) {
-      const crlfSeparatorIndex = buffer.indexOf("\r\n\r\n");
-      const lfSeparatorIndex = buffer.indexOf("\n\n");
+      const crlfIdx = buffer.indexOf("\r\n\r\n");
+      const lfIdx = buffer.indexOf("\n\n");
 
-      let separatorIndex = -1;
-      let separatorLength = 0;
+      let sepIdx = -1;
+      let sepLen = 0;
 
-      if (crlfSeparatorIndex !== -1 && (lfSeparatorIndex === -1 || crlfSeparatorIndex < lfSeparatorIndex)) {
-        separatorIndex = crlfSeparatorIndex;
-        separatorLength = 4;
-      } else if (lfSeparatorIndex !== -1) {
-        separatorIndex = lfSeparatorIndex;
-        separatorLength = 2;
+      if (crlfIdx !== -1 && (lfIdx === -1 || crlfIdx < lfIdx)) {
+        sepIdx = crlfIdx;
+        sepLen = 4;
+      } else if (lfIdx !== -1) {
+        sepIdx = lfIdx;
+        sepLen = 2;
       }
 
-      if (separatorIndex === -1) {
-        return;
-      }
+      if (sepIdx === -1) return;
 
-      const headerBlock = buffer.slice(0, separatorIndex);
-      buffer = buffer.slice(separatorIndex + separatorLength);
+      const headerBlock = buffer.slice(0, sepIdx);
+      buffer = buffer.slice(sepIdx + sepLen);
       const match = headerBlock.match(/Content-Length:\s*(\d+)/i);
       if (!match) {
         logger.error("Missing Content-Length header");
@@ -146,9 +189,7 @@ process.stdin.on("data", (chunk) => {
       expectedContentLength = Number.parseInt(match[1], 10);
     }
 
-    if (buffer.length < expectedContentLength) {
-      return;
-    }
+    if (buffer.length < expectedContentLength) return;
 
     const rawMessage = buffer.slice(0, expectedContentLength);
     buffer = buffer.slice(expectedContentLength);
@@ -182,15 +223,8 @@ async function handleMessage(rawMessage: string): Promise<void> {
       case "initialize":
         sendResult(request.id ?? null, {
           protocolVersion: "2024-11-05",
-          capabilities: {
-            tools: {
-              listChanged: false,
-            },
-          },
-          serverInfo: {
-            name: "mantle-yield-mcp",
-            version: "0.1.0",
-          },
+          capabilities: { tools: { listChanged: false } },
+          serverInfo: { name: "mantle-yield-mcp", version: "0.1.0" },
         });
         return;
       case "notifications/initialized":
@@ -200,11 +234,7 @@ async function handleMessage(rawMessage: string): Promise<void> {
         return;
       case "tools/list":
         sendResult(request.id ?? null, {
-          tools: tools.map(({ name, description, inputSchema }) => ({
-            name,
-            description,
-            inputSchema,
-          })),
+          tools: tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
         });
         return;
       case "tools/call":
@@ -234,63 +264,40 @@ async function handleToolCall(request: JsonRpcRequest): Promise<void> {
   try {
     const result = await tool.handler(args);
     sendResult(request.id ?? null, {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(result, null, 2),
-        },
-      ],
+      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
       structuredContent: result,
       isError: false,
     });
   } catch (error) {
     const gap = toBackendGap(error);
+    logger.error(`Tool "${toolName}" failed`, { gap });
     sendResult(request.id ?? null, {
       content: [
         {
           type: "text",
-          text: JSON.stringify(
-            {
-              status: "error",
-              backendGaps: [gap],
-            },
-            null,
-            2,
-          ),
+          text: JSON.stringify({ status: "error", backendGaps: [gap] }, null, 2),
         },
       ],
-      structuredContent: {
-        status: "error",
-        backendGaps: [gap],
-      },
+      structuredContent: { status: "error", backendGaps: [gap] },
       isError: true,
     });
   }
 }
 
 function sendResult(id: JsonRpcId, result: unknown): void {
-  writeMessage({
-    jsonrpc: "2.0",
-    id,
-    result,
-  });
+  writeMessage({ jsonrpc: "2.0", id, result });
 }
 
 function sendError(id: JsonRpcId, code: number, message: string): void {
-  writeMessage({
-    jsonrpc: "2.0",
-    id,
-    error: {
-      code,
-      message,
-    },
-  });
+  writeMessage({ jsonrpc: "2.0", id, error: { code, message } });
 }
 
 function writeMessage(payload: unknown): void {
   const body = JSON.stringify(payload);
   process.stdout.write(`Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`);
 }
+
+// ── Validation helpers ───────────────────────────────────────────────────────
 
 function requireString(record: Record<string, unknown>, field: string): string {
   const value = record[field];
@@ -316,7 +323,7 @@ function requireStringArray(
       "mcp_input",
     );
   }
-  return value;
+  return value as string[];
 }
 
 function validateOpportunityParams(args: Record<string, unknown>): OpportunityQueryParams {
@@ -350,7 +357,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+// ── Start ────────────────────────────────────────────────────────────────────
+
 logger.info("Mantle Yield MCP server started", {
   apiBaseUrl: env.apiBaseUrl,
-  port: env.port,
+  tools: tools.map((t) => t.name),
 });
