@@ -9,24 +9,12 @@ It acts as a thin wrapper over the Mantle Yield backend API — no direct DefiLl
 
 ---
 
-## Implemented tools
-
-| Tool | Backend endpoint | Status |
-|---|---|---|
-| `mantle_get_health` | `GET /api/health` | ✅ Working |
-| `mantle_get_summary` | `GET /api/summary` | ✅ Working |
-| `mantle_list_opportunities` | `GET /api/opportunities` | ✅ Working |
-| `mantle_get_opportunity` | `GET /api/opportunities/:id` | ✅ Working |
-| `mantle_get_opportunity_chart` | `GET /api/opportunities/:id/chart` | ⚠️ Backend gap (404) |
-| `mantle_compare_opportunities` | `GET /api/opportunities/:id` × N | ✅ Working |
-| `mantle_refresh_data` | `POST /api/refresh` | ⚠️ Backend gap (404) |
-
----
-
 ## Tool reference
 
 ### `mantle_get_health`
-Returns technical status from `GET /api/health`.
+Returns technical health status of the backend service.
+
+Calls `GET /api/health`.
 
 **Arguments:** none
 
@@ -40,16 +28,16 @@ Returns technical status from `GET /api/health`.
     "sourcesRefreshed": 1,
     "failedSources": []
   },
-  "backendGaps": [...]
+  "backendGaps": []
 }
 ```
-
-> **Backend gap note:** The actual `/api/health` response does not include fields `syncedAt`, `nextRefresh`, `source`, `itemCount`, `fileExists`, `snapshotPath` described in the original spec. The tool returns what the backend actually provides and documents the gap.
 
 ---
 
 ### `mantle_get_summary`
-Returns dashboard summary from `GET /api/summary`.
+Returns the dashboard summary.
+
+Calls `GET /api/summary`.
 
 **Arguments:** none
 
@@ -71,7 +59,9 @@ Returns dashboard summary from `GET /api/summary`.
 ---
 
 ### `mantle_list_opportunities`
-Returns a filtered, paginated list of yield opportunities from `GET /api/opportunities`.
+Returns a filtered, paginated list of yield opportunities.
+
+Calls `GET /api/opportunities`.
 
 **Arguments (all optional):**
 
@@ -89,7 +79,9 @@ Returns a filtered, paginated list of yield opportunities from `GET /api/opportu
 ---
 
 ### `mantle_get_opportunity`
-Returns full details for a single opportunity from `GET /api/opportunities/:id`.
+Returns full details for a single opportunity.
+
+Calls `GET /api/opportunities/:id`.
 
 **Arguments:**
 
@@ -100,7 +92,9 @@ Returns full details for a single opportunity from `GET /api/opportunities/:id`.
 ---
 
 ### `mantle_get_opportunity_chart`
-Returns historical APY/TVL chart data from `GET /api/opportunities/:id/chart`.
+Returns historical APY/TVL chart data for an opportunity.
+
+Calls `GET /api/opportunities/:id/chart`.
 
 **Arguments:**
 
@@ -108,12 +102,26 @@ Returns historical APY/TVL chart data from `GET /api/opportunities/:id/chart`.
 |---|---|---|
 | `id` | string (UUID) | ✅ |
 
-> **Backend gap:** This endpoint is not yet implemented. The tool returns `status: "backend_gap"` with a clear explanation.
+**Returns:**
+```json
+{
+  "status": "ok",
+  "data": {
+    "chart": [{ "timestamp": "...", "apy": 5.4, "tvlUsd": 123456 }],
+    "tvlUsd": 123456,
+    "apy": 5.4,
+    "updated": "2026-03-21T17:27:16.934Z"
+  },
+  "backendGaps": []
+}
+```
 
 ---
 
 ### `mantle_compare_opportunities`
-Compares 2 or 3 opportunities side-by-side. Fetches each via `GET /api/opportunities/:id`.
+Compares 2 or 3 opportunities side-by-side.
+
+Fetches each opportunity via `GET /api/opportunities/:id` and returns a unified comparison structure.
 
 **Arguments:**
 
@@ -126,11 +134,20 @@ Compares 2 or 3 opportunities side-by-side. Fetches each via `GET /api/opportuni
 ---
 
 ### `mantle_refresh_data`
-Triggers a manual backend data refresh via `POST /api/refresh`.
+Triggers a manual data refresh on the backend.
+
+Calls `POST /api/refresh`.
 
 **Arguments:** none
 
-> **Backend gap:** This endpoint is not yet implemented. The tool returns `status: "backend_gap"` with a clear explanation.
+**Returns:**
+```json
+{
+  "status": "ok",
+  "data": { "message": "Refresh started." },
+  "backendGaps": []
+}
+```
 
 ---
 
@@ -160,7 +177,7 @@ npm run dev
 
 The server communicates over **stdio** using the MCP protocol (JSON-RPC 2.0 with `Content-Length` framing). It does not open any TCP port.
 
-`npm run dev` uses `node --experimental-strip-types --watch` for fast iteration without a separate compile step.
+`npm run dev` uses `node --watch --import=tsx/esm` for fast iteration without a separate compile step.
 
 ---
 
@@ -199,7 +216,8 @@ For development (no build step):
       "command": "node",
       "args": [
         "--env-file=.env",
-        "--experimental-strip-types",
+        "--import=tsx/esm",
+        "--no-warnings=ExperimentalWarning",
         "src/index.ts"
       ],
       "cwd": "/absolute/path/to/mantle-yield-mcp"
@@ -228,55 +246,9 @@ The MCP server does **not**:
 
 ---
 
-## Backend gaps found (as of 2026-03-21)
-
-### Gap 1 — `GET /api/health` response shape differs from spec
-
-**Endpoint:** `GET /api/health`
-
-**Spec described:**
-```json
-{ "status": "ok", "syncedAt": "...", "nextRefresh": "...", "source": "...", "itemCount": 123, "fileExists": true, "snapshotPath": "..." }
-```
-
-**Actual response:**
-```json
-{ "status": "Healthy", "lastSync": "...", "sourcesRefreshed": 1, "failedSources": [] }
-```
-
-**Impact:** `mantle_get_health` works and returns real data, but the response shape differs from spec. The gap is reported in the tool output under `backendGaps`.
-
-**Fix needed on backend:** Add `syncedAt`, `nextRefresh`, `source`, `itemCount`, `fileExists`, `snapshotPath` to `/api/health` response.
-
----
-
-### Gap 2 — `GET /api/opportunities/:id/chart` not implemented
-
-**Endpoint:** `GET /api/opportunities/:id/chart`
-
-**Actual:** HTTP 404 (Next.js not-found page)
-
-**Impact:** `mantle_get_opportunity_chart` returns `status: "backend_gap"`.
-
-**Fix needed on backend:** Implement `GET /api/opportunities/:id/chart` returning `{ chart, tvlUsd, apy, updated }`.
-
----
-
-### Gap 3 — `POST /api/refresh` not implemented
-
-**Endpoint:** `POST /api/refresh`
-
-**Actual:** HTTP 404 (Next.js not-found page)
-
-**Impact:** `mantle_refresh_data` returns `status: "backend_gap"`.
-
-**Fix needed on backend:** Implement `POST /api/refresh` returning `{ "message": "Refresh started." }`.
-
----
-
 ## Error codes
 
-The server reports structured error codes in `backendGaps`:
+The server reports structured error codes in `backendGaps` when something goes wrong:
 
 | Code | Meaning |
 |---|---|
@@ -295,35 +267,22 @@ The server reports structured error codes in `backendGaps`:
 ```
 src/
   client/
-    apiClient.ts          — HTTP client wrapping all backend endpoints
+    apiClient.ts           — HTTP client wrapping all backend endpoints
   schemas/
-    opportunity.ts        — Opportunity, SummaryData, OpportunitiesResponse types + parsers
-    health.ts             — HealthData type + parser
-    chart.ts              — ChartData type + parser
+    opportunity.ts         — Opportunity, SummaryData, OpportunitiesResponse types + parsers
+    health.ts              — HealthData type + parser
+    chart.ts               — ChartData type + parser
   tools/
-    getHealth.ts          — mantle_get_health
-    getSummary.ts         — mantle_get_summary
-    listOpportunities.ts  — mantle_list_opportunities
-    getOpportunity.ts     — mantle_get_opportunity
+    getHealth.ts           — mantle_get_health
+    getSummary.ts          — mantle_get_summary
+    listOpportunities.ts   — mantle_list_opportunities
+    getOpportunity.ts      — mantle_get_opportunity
     getOpportunityChart.ts — mantle_get_opportunity_chart
     compareOpportunities.ts — mantle_compare_opportunities
-    refreshData.ts        — mantle_refresh_data
+    refreshData.ts         — mantle_refresh_data
   utils/
-    env.ts                — ENV loading + validation
-    logger.ts             — Structured stderr logger
-    errors.ts             — Typed error classes + toBackendGap helper
-  index.ts                — MCP server entry point (stdio transport)
+    env.ts                 — ENV loading + validation
+    logger.ts              — Structured stderr logger
+    errors.ts              — Typed error classes + toBackendGap helper
+  index.ts                 — MCP server entry point (stdio transport)
 ```
-
----
-
-## Status
-
-BACKEND GAPS FOUND
-
-Missing endpoints (documented above):
-- `GET /api/opportunities/:id/chart` — returns 404
-- `POST /api/refresh` — returns 404
-
-Response shape mismatch (documented above):
-- `GET /api/health` — different fields than spec
