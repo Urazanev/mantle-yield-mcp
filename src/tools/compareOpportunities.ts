@@ -10,15 +10,15 @@ export async function compareOpportunities(client: MantleYieldApiClient, ids: st
   const items = opportunities.map((opp) => ({
     id: opp.id,
     protocolName: opp.protocolName,
-    strategyType: opp.strategyType,
-    assetSymbol: opp.assetSymbol,
+    strategy: opp.strategy,
+    asset: opp.asset,
     apy: opp.apy,
     apyBase: opp.apyBase,
     apyReward: opp.apyReward,
     tvlUsd: opp.tvlUsd,
-    exposureType: opp.exposureType,
+    exposure: opp.exposure,
     complexity: opp.complexity,
-    lockupLabel: opp.lockupLabel,
+    lockup: opp.lockup,
     updatedAt: opp.updatedAt,
   }));
 

@@ -2,16 +2,15 @@ import { InvalidPayloadShapeError, MissingFieldError } from "../utils/errors.js"
 
 /**
  * Actual /api/health response shape (as returned by the live backend).
- *
- * NOTE: The spec describes additional fields (syncedAt, nextRefresh, source,
- * itemCount, fileExists, snapshotPath) that are NOT present in the current
- * backend response. Those are tracked as backend gaps in the tool layer.
  */
 export interface HealthData {
   status: string;
-  lastSync: string | null;
-  sourcesRefreshed: number;
-  failedSources: string[];
+  syncedAt: string | null;
+  nextRefresh: string | null;
+  source: string | null;
+  itemCount: number | null;
+  fileExists: boolean | null;
+  snapshotPath: string | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -31,29 +30,20 @@ export function parseHealthData(value: unknown): HealthData {
     throw new InvalidPayloadShapeError('Field "status" must be a string', "HealthData");
   }
 
-  const lastSync = value.lastSync;
-  if (lastSync !== null && lastSync !== undefined && typeof lastSync !== "string") {
-    throw new InvalidPayloadShapeError('Field "lastSync" must be a string or null', "HealthData");
-  }
-
-  const sourcesRefreshed = value.sourcesRefreshed;
-  if (typeof sourcesRefreshed !== "number") {
-    if (sourcesRefreshed === undefined) {
-      throw new MissingFieldError("sourcesRefreshed", "HealthData");
-    }
-    throw new InvalidPayloadShapeError('Field "sourcesRefreshed" must be a number', "HealthData");
-  }
-
-  const failedSources = value.failedSources;
-  if (!Array.isArray(failedSources) || failedSources.some((item) => typeof item !== "string")) {
-    throw new InvalidPayloadShapeError('Field "failedSources" must be an array of strings', "HealthData");
-  }
+  const syncedAt = value.syncedAt;
+  const nextRefresh = value.nextRefresh;
+  const source = value.source;
+  const itemCount = value.itemCount;
+  const fileExists = value.fileExists;
+  const snapshotPath = value.snapshotPath;
 
   return {
     status,
-    lastSync: typeof lastSync === "string" ? lastSync : null,
-    sourcesRefreshed,
-    failedSources,
+    syncedAt: typeof syncedAt === "string" ? syncedAt : null,
+    nextRefresh: typeof nextRefresh === "string" ? nextRefresh : null,
+    source: typeof source === "string" ? source : null,
+    itemCount: typeof itemCount === "number" ? itemCount : null,
+    fileExists: typeof fileExists === "boolean" ? fileExists : null,
+    snapshotPath: typeof snapshotPath === "string" ? snapshotPath : null,
   };
 }
-

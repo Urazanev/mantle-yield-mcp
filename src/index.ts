@@ -12,6 +12,7 @@ import { InvalidPayloadShapeError, toBackendGap } from "./utils/errors.js";
 import { Logger } from "./utils/logger.js";
 
 type JsonRpcId = string | number | null;
+type TransportMode = "content-length" | "newline";
 
 interface JsonRpcRequest {
   jsonrpc: "2.0";
@@ -26,6 +27,8 @@ interface ToolDefinition {
   inputSchema: Record<string, unknown>;
   handler: (args: Record<string, unknown>) => Promise<unknown>;
 }
+
+const supportedProtocolVersions = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
 
 const env = loadEnv();
 const logger = new Logger(env.logLevel);
@@ -155,48 +158,14 @@ const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
 
 // ── MCP stdio transport ──────────────────────────────────────────────────────
 
-let buffer = "";
+let buffer = Buffer.alloc(0);
 let expectedContentLength: number | null = null;
+let transportMode: TransportMode = "content-length";
 
-process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
-  buffer += chunk;
-  while (true) {
-    if (expectedContentLength === null) {
-      const crlfIdx = buffer.indexOf("\r\n\r\n");
-      const lfIdx = buffer.indexOf("\n\n");
-
-      let sepIdx = -1;
-      let sepLen = 0;
-
-      if (crlfIdx !== -1 && (lfIdx === -1 || crlfIdx < lfIdx)) {
-        sepIdx = crlfIdx;
-        sepLen = 4;
-      } else if (lfIdx !== -1) {
-        sepIdx = lfIdx;
-        sepLen = 2;
-      }
-
-      if (sepIdx === -1) return;
-
-      const headerBlock = buffer.slice(0, sepIdx);
-      buffer = buffer.slice(sepIdx + sepLen);
-      const match = headerBlock.match(/Content-Length:\s*(\d+)/i);
-      if (!match) {
-        logger.error("Missing Content-Length header");
-        continue;
-      }
-      expectedContentLength = Number.parseInt(match[1], 10);
-    }
-
-    if (buffer.length < expectedContentLength) return;
-
-    const rawMessage = buffer.slice(0, expectedContentLength);
-    buffer = buffer.slice(expectedContentLength);
-    expectedContentLength = null;
-
-    void handleMessage(rawMessage);
-  }
+  const nextChunk = typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk;
+  buffer = Buffer.concat([buffer, nextChunk]);
+  processInputBuffer();
 });
 
 process.stdin.on("end", () => {
@@ -221,8 +190,9 @@ async function handleMessage(rawMessage: string): Promise<void> {
   try {
     switch (request.method) {
       case "initialize":
+        const protocolVersion = resolveProtocolVersion(request.params);
         sendResult(request.id ?? null, {
-          protocolVersion: "2024-11-05",
+          protocolVersion,
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "mantle-yield-mcp", version: "0.1.0" },
         });
@@ -247,6 +217,95 @@ async function handleMessage(rawMessage: string): Promise<void> {
     logger.error("Unhandled request failure", { error: toBackendGap(error) });
     sendError(request.id ?? null, -32603, (error as Error).message);
   }
+}
+
+function findHeaderSeparator(value: Buffer): { index: number; length: number } | null {
+  const crlfIdx = value.indexOf("\r\n\r\n");
+  const lfIdx = value.indexOf("\n\n");
+
+  if (crlfIdx !== -1 && (lfIdx === -1 || crlfIdx < lfIdx)) {
+    return { index: crlfIdx, length: 4 };
+  }
+
+  if (lfIdx !== -1) {
+    return { index: lfIdx, length: 2 };
+  }
+
+  return null;
+}
+
+function processInputBuffer(): void {
+  while (true) {
+    if (expectedContentLength !== null) {
+      if (buffer.length < expectedContentLength) {
+        return;
+      }
+
+      const rawMessage = buffer.subarray(0, expectedContentLength).toString("utf8");
+      buffer = buffer.subarray(expectedContentLength);
+      expectedContentLength = null;
+      void handleMessage(rawMessage);
+      continue;
+    }
+
+    const parsedContentLength = tryParseContentLengthMessage();
+    if (parsedContentLength) {
+      continue;
+    }
+
+    const parsedNewlineMessage = tryParseNewlineDelimitedMessage();
+    if (parsedNewlineMessage) {
+      continue;
+    }
+
+    return;
+  }
+}
+
+function tryParseContentLengthMessage(): boolean {
+  const headerInfo = findHeaderSeparator(buffer);
+  if (!headerInfo) {
+    return false;
+  }
+
+  const headerBlock = buffer.subarray(0, headerInfo.index).toString("utf8");
+  if (!/content-length\s*:/i.test(headerBlock)) {
+    return false;
+  }
+
+  transportMode = "content-length";
+
+  buffer = buffer.subarray(headerInfo.index + headerInfo.length);
+  const match = headerBlock.match(/Content-Length:\s*(\d+)/i);
+  if (!match) {
+    logger.error("Missing Content-Length header");
+    return true;
+  }
+
+  expectedContentLength = Number.parseInt(match[1], 10);
+  return true;
+}
+
+function tryParseNewlineDelimitedMessage(): boolean {
+  const newlineIndex = buffer.indexOf(0x0a);
+  if (newlineIndex === -1) {
+    return false;
+  }
+
+  const rawLine = buffer.subarray(0, newlineIndex).toString("utf8").replace(/\r$/, "");
+  buffer = buffer.subarray(newlineIndex + 1);
+
+  if (!rawLine.trim()) {
+    return true;
+  }
+
+  if (!looksLikeJsonRpcLine(rawLine)) {
+    return true;
+  }
+
+  transportMode = "newline";
+  void handleMessage(rawLine);
+  return true;
 }
 
 async function handleToolCall(request: JsonRpcRequest): Promise<void> {
@@ -294,6 +353,12 @@ function sendError(id: JsonRpcId, code: number, message: string): void {
 
 function writeMessage(payload: unknown): void {
   const body = JSON.stringify(payload);
+
+  if (transportMode === "newline") {
+    process.stdout.write(`${body}\n`);
+    return;
+  }
+
   process.stdout.write(`Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`);
 }
 
@@ -357,9 +422,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function resolveProtocolVersion(params: JsonRpcRequest["params"]): string {
+  if (!isRecord(params)) {
+    return supportedProtocolVersions[0];
+  }
+
+  const requestedVersion = params.protocolVersion;
+
+  if (typeof requestedVersion === "string" && supportedProtocolVersions.includes(requestedVersion as never)) {
+    return requestedVersion;
+  }
+
+  return supportedProtocolVersions[0];
+}
+
 // ── Start ────────────────────────────────────────────────────────────────────
 
 logger.info("Mantle Yield MCP server started", {
   apiBaseUrl: env.apiBaseUrl,
   tools: tools.map((t) => t.name),
 });
+
+function looksLikeJsonRpcLine(value: string): boolean {
+  const trimmed = value.trimStart();
+  return trimmed.startsWith("{") || trimmed.startsWith("[");
+}

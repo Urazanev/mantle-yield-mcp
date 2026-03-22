@@ -2,33 +2,24 @@ export interface AppEnv {
   apiBaseUrl: string;
   apiToken?: string;
   apiTimeoutMs: number;
-  port: number;
-  nodeEnv: string;
   logLevel: string;
 }
 
+const DEFAULT_API_BASE_URL = "https://mantle-yield.asterworks.cc";
+
 export function loadEnv(env: NodeJS.ProcessEnv = process.env): AppEnv {
-  const apiBaseUrl = env.MANTLE_YIELD_API_BASE_URL?.trim();
-  if (!apiBaseUrl) {
-    throw new Error("MANTLE_YIELD_API_BASE_URL is required");
-  }
+  const apiBaseUrl = (env.MANTLE_YIELD_API_BASE_URL?.trim() || DEFAULT_API_BASE_URL).replace(/\/+$/, "");
 
   const apiTimeoutMs = Number.parseInt(env.MANTLE_YIELD_API_TIMEOUT_MS ?? "10000", 10);
-  if (!Number.isFinite(apiTimeoutMs) || apiTimeoutMs <= 0) {
-    throw new Error("MANTLE_YIELD_API_TIMEOUT_MS must be a positive integer");
-  }
+  const resolvedTimeout = Number.isFinite(apiTimeoutMs) && apiTimeoutMs > 0 ? apiTimeoutMs : 10000;
 
-  const port = Number.parseInt(env.PORT ?? "4001", 10);
-  if (!Number.isFinite(port) || port <= 0) {
-    throw new Error("PORT must be a positive integer");
-  }
+  const apiToken = env.MANTLE_YIELD_API_TOKEN?.trim() || undefined;
+  const logLevel = env.LOG_LEVEL?.trim() || "silent";
 
   return {
-    apiBaseUrl: apiBaseUrl.replace(/\/+$/, ""),
-    apiToken: env.MANTLE_YIELD_API_TOKEN?.trim() || undefined,
-    apiTimeoutMs,
-    port,
-    nodeEnv: env.NODE_ENV ?? "development",
-    logLevel: env.LOG_LEVEL ?? "info",
+    apiBaseUrl,
+    apiTimeoutMs: resolvedTimeout,
+    apiToken,
+    logLevel,
   };
 }

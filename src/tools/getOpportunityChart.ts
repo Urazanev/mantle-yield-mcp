@@ -1,10 +1,8 @@
 import type { MantleYieldApiClient } from "../client/apiClient.js";
-import { MissingEndpointError } from "../utils/errors.js";
+import { ResourceNotFoundError } from "../utils/errors.js";
+
 /**
  * mantle_get_opportunity_chart — GET /api/opportunities/:id/chart
- *
- * Backend gap: This endpoint is not yet implemented (returns 404).
- * When it becomes available, this tool will pass through the chart data.
  */
 export async function getOpportunityChart(client: MantleYieldApiClient, id: string) {
   try {
@@ -15,16 +13,14 @@ export async function getOpportunityChart(client: MantleYieldApiClient, id: stri
       backendGaps: [],
     };
   } catch (error) {
-    if (error instanceof MissingEndpointError) {
+    if (error instanceof ResourceNotFoundError) {
       return {
-        status: "backend_gap" as const,
+        status: "error" as const,
         data: null,
         backendGaps: [
           {
-            code: "missing_endpoint" as const,
-            message:
-              "Backend endpoint GET /api/opportunities/:id/chart is not yet implemented (HTTP 404). " +
-              "Chart history data is unavailable until this endpoint is added to the backend.",
+            code: "not_found" as const,
+            message: `No chart data found for opportunity "${id}".`,
             endpoint: `/api/opportunities/${id}/chart`,
           },
         ],

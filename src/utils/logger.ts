@@ -1,4 +1,4 @@
-const levels = ["debug", "info", "warn", "error"] as const;
+const levels = ["debug", "info", "warn", "error", "silent"] as const;
 type LogLevel = (typeof levels)[number];
 
 export class Logger {
@@ -30,7 +30,15 @@ export class Logger {
       return;
     }
 
-    const payload = meta === undefined ? "" : ` ${JSON.stringify(meta)}`;
+    const payload = meta === undefined ? "" : ` ${safeStringify(meta)}`;
     process.stderr.write(`[${new Date().toISOString()}] ${level.toUpperCase()} ${message}${payload}\n`);
+  }
+}
+
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return '"[unserializable]"';
   }
 }
