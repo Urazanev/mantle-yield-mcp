@@ -55,10 +55,7 @@ Use this runtime shape in your MCP client configuration, adapting only the outer
   "command": "node",
   "args": [
     "/ABSOLUTE/PATH/TO/mantle-yield-mcp/dist/index.js"
-  ],
-  "env": {
-    "LOG_LEVEL": "silent"
-  }
+  ]
 }
 ```
 
@@ -82,14 +79,6 @@ All environment variables are optional.
 | `MANTLE_YIELD_API_BASE_URL` | `https://mantle-yield.asterworks.cc` | Override backend API base URL |
 | `MANTLE_YIELD_API_TOKEN` | unset | Optional bearer token |
 | `MANTLE_YIELD_API_TIMEOUT_MS` | `10000` | HTTP timeout in milliseconds |
-| `LOG_LEVEL` | `silent` | `debug`, `info`, `warn`, `error`, or `silent` |
-
-Example:
-
-```bash
-LOG_LEVEL=info \
-node /ABSOLUTE/PATH/TO/mantle-yield-mcp/dist/index.js
-```
 
 ## Development
 
@@ -107,7 +96,6 @@ npm run dev:tsx
 
 - Rebuild after code changes: `npm run build`
 - If a client hangs on `initialize`, verify it launches `node /absolute/path/to/dist/index.js` directly
-- If your client treats `stderr` as a failure signal, keep `LOG_LEVEL=silent`
 
 ## Notes
 
